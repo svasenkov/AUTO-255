@@ -1,12 +1,12 @@
 package cloud.autotests.tests;
 
 import cloud.autotests.helpers.DriverUtils;
+import com.codeborne.selenide.Condition;
 import io.qameta.allure.Description;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import static com.codeborne.selenide.Selenide.open;
-import static com.codeborne.selenide.Selenide.title;
+import static com.codeborne.selenide.Selenide.*;
 import static io.qameta.allure.Allure.step;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -16,16 +16,15 @@ public class GeneratedTests extends TestBase {
     @Description("Soon to be implemented by you (or QA.GURU engineers)")
     @DisplayName("Тест на поиск в mail.ru")
     void generatedTest() {
-        step("Открыть https://mail.ru", () -> {
-            step("// todo: just add selenium action");
-        });
+        step("Open url 'https://mail.ru'", () ->
+                open("https://mail.ru"));
 
         step("Ввести \"mosqa.ru\" в поле поиска", () -> {
-            step("// todo: just add selenium action");
+            $("#q").setValue("mosqa.ru").pressEnter();
         });
 
         step("Проверить, что \"MosQA CTF\" появилось в результатах поиска", () -> {
-            step("// todo: just add selenium action");
+            $("#js-result").shouldHave(Condition.text("MosQA CTF"));
         });
     }
 
