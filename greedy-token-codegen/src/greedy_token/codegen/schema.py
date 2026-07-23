@@ -432,4 +432,99 @@ TARGETS = {
         "allure_version": "2.25.0",
         "extensions": [".scala"],
     },
+    # ========== UI Testing Frameworks ==========
+    # Selenium
+    "java-selenium-junit5": {
+        "language": "java",
+        "test_framework": "selenium",
+        "build_tool": "gradle",
+        "allure_version": "2.25.0",
+        "ui_framework": "selenium",
+        "extensions": [".java"],
+    },
+    "python-selenium-pytest": {
+        "language": "python",
+        "test_framework": "selenium",
+        "build_tool": "pip",
+        "allure_version": "2.25.0",
+        "ui_framework": "selenium",
+        "extensions": ["test_*.py"],
+    },
+    "csharp-selenium-nunit": {
+        "language": "csharp",
+        "test_framework": "selenium",
+        "build_tool": "dotnet",
+        "allure_version": "2.25.0",
+        "ui_framework": "selenium",
+        "extensions": [".cs"],
+    },
+    # Selenide (Java)
+    "java-selenide-junit5": {
+        "language": "java",
+        "test_framework": "selenide",
+        "build_tool": "gradle",
+        "allure_version": "2.25.0",
+        "ui_framework": "selenide",
+        "extensions": [".java"],
+    },
+    "java-selenide-testng": {
+        "language": "java",
+        "test_framework": "selenide",
+        "build_tool": "gradle",
+        "allure_version": "2.25.0",
+        "ui_framework": "selenide",
+        "extensions": [".java"],
+    },
+    # Selene (Python)
+    "python-selene-pytest": {
+        "language": "python",
+        "test_framework": "selene",
+        "build_tool": "pip",
+        "allure_version": "2.25.0",
+        "ui_framework": "selene",
+        "extensions": ["test_*.py"],
+    },
+    # Playwright (multi-language)
+    "python-playwright-pytest": {
+        "language": "python",
+        "test_framework": "playwright",
+        "build_tool": "pip",
+        "allure_version": "2.25.0",
+        "ui_framework": "playwright",
+        "extensions": ["test_*.py"],
+    },
+    "java-playwright-junit5": {
+        "language": "java",
+        "test_framework": "playwright",
+        "build_tool": "gradle",
+        "allure_version": "2.25.0",
+        "ui_framework": "playwright",
+        "extensions": [".java"],
+    },
+    "csharp-playwright-nunit": {
+        "language": "csharp",
+        "test_framework": "playwright",
+        "build_tool": "dotnet",
+        "allure_version": "2.25.0",
+        "ui_framework": "playwright",
+        "extensions": [".cs"],
+    },
+    # Cypress (JavaScript)
+    "javascript-cypress": {
+        "language": "javascript",
+        "test_framework": "cypress",
+        "build_tool": "npm",
+        "allure_version": "3.0.0",
+        "ui_framework": "cypress",
+        "extensions": [".cy.js"],
+    },
+    # WebdriverIO
+    "typescript-webdriverio": {
+        "language": "typescript",
+        "test_framework": "webdriverio",
+        "build_tool": "npm",
+        "allure_version": "3.0.0",
+        "ui_framework": "webdriverio",
+        "extensions": [".ts"],
+    },
 }

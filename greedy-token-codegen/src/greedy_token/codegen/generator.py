@@ -1939,6 +1939,1305 @@ jobs:
 """
 
 
+# ===================== UI TESTING FRAMEWORKS =====================
+
+
+def _generate_java_selenide(
+    suite: TestSuite,
+    config: dict[str, Any],
+    output: Path,
+    *,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Generate Java Selenide + JUnit5 project."""
+    report: dict[str, Any] = {
+        "target": "java-selenide-junit5",
+        "files_created": [],
+        "files_skipped": [],
+        "warnings": [],
+    }
+
+    _write_selenide_gradle(suite, output, report, overwrite)
+    _write_selenide_tests(suite, output, report, overwrite)
+    _write_selenide_config(output, report, overwrite)
+    _write_github_actions_selenide(suite, output, report, overwrite)
+
+    return report
+
+
+def _write_selenide_gradle(
+    suite: TestSuite,
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write Selenide build.gradle."""
+    build_gradle = output / "build.gradle"
+    if build_gradle.exists() and not overwrite:
+        report["files_skipped"].append(str(build_gradle))
+    else:
+        build_gradle.write_text(_SELENIDE_BUILD_GRADLE.format(
+            project_name=_to_java_project_name(suite.name),
+        ), encoding="utf-8")
+        report["files_created"].append(str(build_gradle))
+
+    settings = output / "settings.gradle"
+    if not settings.exists() or overwrite:
+        settings.write_text(f"rootProject.name = '{_to_java_project_name(suite.name)}'\n", encoding="utf-8")
+        report["files_created"].append(str(settings))
+
+
+def _write_selenide_tests(
+    suite: TestSuite,
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write Selenide test classes."""
+    test_dir = output / "src" / "test" / "java" / "tests"
+    test_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write TestBase
+    base_file = test_dir / "TestBase.java"
+    if not base_file.exists() or overwrite:
+        base_file.write_text(_SELENIDE_TEST_BASE, encoding="utf-8")
+        report["files_created"].append(str(base_file))
+
+    for module in suite.modules:
+        class_name = _to_java_class_name(module.name)
+        file_path = test_dir / f"{class_name}.java"
+
+        if file_path.exists() and not overwrite:
+            report["files_skipped"].append(str(file_path))
+            continue
+
+        content = _generate_selenide_test_class(module)
+        file_path.write_text(content, encoding="utf-8")
+        report["files_created"].append(str(file_path))
+
+
+def _generate_selenide_test_class(module: TestModule) -> str:
+    """Generate Selenide test class."""
+    class_name = _to_java_class_name(module.name)
+
+    methods = []
+    for test in module.tests:
+        method = _generate_selenide_test_method(test)
+        methods.append(method)
+
+    methods_str = "\n\n".join(methods)
+
+    allure_attrs = []
+    if module.allure.epic:
+        allure_attrs.append(f'@Epic("{_escape_java(module.allure.epic)}")')
+    if module.allure.feature:
+        allure_attrs.append(f'@Feature("{_escape_java(module.allure.feature)}")')
+
+    attrs_str = "\n".join(allure_attrs)
+
+    return f"""package tests;
+
+import com.codeborne.selenide.*;
+import io.qameta.allure.*;
+import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.extension.ExtendWith;
+import io.qameta.allure.selenide.AllureSelenide;
+
+import static com.codeborne.selenide.Selenide.*;
+import static com.codeborne.selenide.Condition.*;
+import static io.qameta.allure.Allure.step;
+
+{attrs_str}
+public class {class_name} extends TestBase {{
+
+{methods_str}
+}}
+"""
+
+
+def _generate_selenide_test_method(test: TestCase) -> str:
+    """Generate Selenide test method."""
+    method_name = _to_java_method_name(test.name)
+
+    attrs = []
+    if test.allure.story:
+        attrs.append(f'    @Story("{_escape_java(test.allure.story)}")')
+    if test.allure.title:
+        attrs.append(f'    @DisplayName("{_escape_java(test.allure.title)}")')
+
+    if test.skip_reason:
+        attrs.append(f'    @Disabled("{_escape_java(test.skip_reason)}")')
+
+    attrs_str = "\n".join(attrs) + "\n" if attrs else ""
+
+    steps_code = []
+    for step in test.steps:
+        step_code = _generate_selenide_step(step)
+        steps_code.append(step_code)
+
+    body = "\n".join(steps_code) if steps_code else "        // TODO: implement UI test"
+
+    return f"""{attrs_str}    @Test
+    void {method_name}() {{
+{body}
+    }}"""
+
+
+def _generate_selenide_step(step: Any) -> str:
+    """Generate Selenide step with UI actions."""
+    step_name = _escape_java(step.name)
+
+    actions = []
+    for assertion in step.assertions:
+        action = _generate_selenide_assertion(assertion)
+        if action:
+            actions.append(f"            {action}")
+
+    if actions:
+        actions_str = "\n".join(actions)
+        return f'''        step("{step_name}", () -> {{
+{actions_str}
+        }});'''
+    else:
+        hint = step.code_hint or '// $(selector).shouldBe(visible);'
+        return f'''        step("{step_name}", () -> {{
+            {hint}
+        }});'''
+
+
+def _generate_selenide_assertion(assertion: Any) -> str:
+    """Generate Selenide assertion/action."""
+    actual = assertion.actual
+    expected = assertion.expected
+
+    mapping = {
+        AssertionType.EQUALS: f'$("{actual}").shouldHave(text({expected}));',
+        AssertionType.TRUE: f'$("{actual}").shouldBe(visible);',
+        AssertionType.FALSE: f'$("{actual}").shouldNotBe(visible);',
+        AssertionType.CONTAINS: f'$("{actual}").shouldHave(text({expected}));',
+        AssertionType.NOT_NONE: f'$("{actual}").shouldBe(exist);',
+    }
+
+    return mapping.get(assertion.type, f"// UI: {assertion.type.value}")
+
+
+def _write_selenide_config(
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write Selenide configuration."""
+    resources = output / "src" / "test" / "resources"
+    resources.mkdir(parents=True, exist_ok=True)
+
+    props = resources / "selenide.properties"
+    if not props.exists() or overwrite:
+        props.write_text("""selenide.browser=chrome
+selenide.headless=true
+selenide.timeout=10000
+selenide.screenshots=true
+""", encoding="utf-8")
+        report["files_created"].append(str(props))
+
+    allure_props = resources / "allure.properties"
+    if not allure_props.exists() or overwrite:
+        allure_props.write_text("allure.results.directory=build/allure-results\n", encoding="utf-8")
+        report["files_created"].append(str(allure_props))
+
+
+def _write_github_actions_selenide(
+    suite: TestSuite,
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write GitHub Actions for Selenide."""
+    workflows_dir = output / ".github" / "workflows"
+    workflows_dir.mkdir(parents=True, exist_ok=True)
+
+    workflow = workflows_dir / "test.yml"
+    if not workflow.exists() or overwrite:
+        workflow.write_text(_SELENIDE_GITHUB_WORKFLOW, encoding="utf-8")
+        report["files_created"].append(str(workflow))
+
+
+def _generate_python_selene(
+    suite: TestSuite,
+    config: dict[str, Any],
+    output: Path,
+    *,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Generate Python Selene + pytest project."""
+    report: dict[str, Any] = {
+        "target": "python-selene-pytest",
+        "files_created": [],
+        "files_skipped": [],
+        "warnings": [],
+    }
+
+    _write_selene_requirements(output, report, overwrite)
+    _write_selene_conftest(output, report, overwrite)
+    _write_selene_tests(suite, output, report, overwrite)
+    _write_github_actions_selene(suite, output, report, overwrite)
+
+    return report
+
+
+def _write_selene_requirements(
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write requirements.txt for Selene."""
+    req = output / "requirements.txt"
+    if not req.exists() or overwrite:
+        req.write_text("""selene>=2.0.0
+pytest>=8.0
+allure-pytest>=2.16
+webdriver-manager>=4.0
+""", encoding="utf-8")
+        report["files_created"].append(str(req))
+
+
+def _write_selene_conftest(
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write conftest.py for Selene."""
+    tests_dir = output / "tests"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+
+    conftest = tests_dir / "conftest.py"
+    if not conftest.exists() or overwrite:
+        conftest.write_text(_SELENE_CONFTEST, encoding="utf-8")
+        report["files_created"].append(str(conftest))
+
+
+def _write_selene_tests(
+    suite: TestSuite,
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write Selene test files."""
+    tests_dir = output / "tests"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+
+    for module in suite.modules:
+        file_name = f"{_to_snake_case(module.name)}.py"
+        if not file_name.startswith("test_"):
+            file_name = f"test_{file_name}"
+        file_path = tests_dir / file_name
+
+        if file_path.exists() and not overwrite:
+            report["files_skipped"].append(str(file_path))
+            continue
+
+        content = _generate_selene_test_file(module)
+        file_path.write_text(content, encoding="utf-8")
+        report["files_created"].append(str(file_path))
+
+
+def _generate_selene_test_file(module: TestModule) -> str:
+    """Generate Selene test file."""
+    tests = []
+    for test in module.tests:
+        test_code = _generate_selene_test_func(test)
+        tests.append(test_code)
+
+    tests_str = "\n\n\n".join(tests)
+
+    markers = []
+    if module.allure.epic:
+        markers.append(f'    allure.epic("{_escape_python(module.allure.epic)}"),')
+    if module.allure.feature:
+        markers.append(f'    allure.feature("{_escape_python(module.allure.feature)}"),')
+
+    markers_str = "\n".join(markers)
+    pytestmark = f"""pytestmark = [
+{markers_str}
+]
+
+""" if markers else ""
+
+    return f"""import allure
+import pytest
+from selene import browser, be, have
+
+{pytestmark}
+{tests_str}
+"""
+
+
+def _generate_selene_test_func(test: TestCase) -> str:
+    """Generate Selene test function."""
+    func_name = test.name if test.name.startswith("test_") else f"test_{_to_snake_case(test.name)}"
+
+    decorators = []
+    if test.allure.story:
+        decorators.append(f'@allure.story("{_escape_python(test.allure.story)}")')
+    if test.allure.title:
+        decorators.append(f'@allure.title("{_escape_python(test.allure.title)}")')
+    if test.skip_reason:
+        decorators.append(f'@pytest.mark.skip(reason="{_escape_python(test.skip_reason)}")')
+
+    decorators_str = "\n".join(decorators) + "\n" if decorators else ""
+
+    steps_code = []
+    for step in test.steps:
+        step_code = _generate_selene_step(step)
+        steps_code.append(step_code)
+
+    body = "\n".join(steps_code) if steps_code else "    pass  # TODO: implement UI test"
+
+    return f"""{decorators_str}def {func_name}():
+{body}"""
+
+
+def _generate_selene_step(step: Any) -> str:
+    """Generate Selene step."""
+    step_name = _escape_python(step.name)
+
+    actions = []
+    for assertion in step.assertions:
+        action = _generate_selene_assertion(assertion)
+        if action:
+            actions.append(f"        {action}")
+
+    if actions:
+        actions_str = "\n".join(actions)
+        return f'''    with allure.step("{step_name}"):
+{actions_str}'''
+    else:
+        hint = step.code_hint or "# browser.element(selector).should(be.visible)"
+        return f'''    with allure.step("{step_name}"):
+        {hint}'''
+
+
+def _generate_selene_assertion(assertion: Any) -> str:
+    """Generate Selene assertion."""
+    actual = assertion.actual
+    expected = assertion.expected
+
+    mapping = {
+        AssertionType.EQUALS: f'browser.element("{actual}").should(have.text({expected}))',
+        AssertionType.TRUE: f'browser.element("{actual}").should(be.visible)',
+        AssertionType.FALSE: f'browser.element("{actual}").should(be.not_.visible)',
+        AssertionType.CONTAINS: f'browser.element("{actual}").should(have.text({expected}))',
+        AssertionType.NOT_NONE: f'browser.element("{actual}").should(be.present)',
+    }
+
+    return mapping.get(assertion.type, f"# UI: {assertion.type.value}")
+
+
+def _write_github_actions_selene(
+    suite: TestSuite,
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write GitHub Actions for Selene."""
+    workflows_dir = output / ".github" / "workflows"
+    workflows_dir.mkdir(parents=True, exist_ok=True)
+
+    workflow = workflows_dir / "test.yml"
+    if not workflow.exists() or overwrite:
+        workflow.write_text(_SELENE_GITHUB_WORKFLOW, encoding="utf-8")
+        report["files_created"].append(str(workflow))
+
+
+def _generate_python_playwright(
+    suite: TestSuite,
+    config: dict[str, Any],
+    output: Path,
+    *,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Generate Python Playwright + pytest project."""
+    report: dict[str, Any] = {
+        "target": "python-playwright-pytest",
+        "files_created": [],
+        "files_skipped": [],
+        "warnings": [],
+    }
+
+    _write_playwright_requirements(output, report, overwrite)
+    _write_playwright_conftest(output, report, overwrite)
+    _write_playwright_tests(suite, output, report, overwrite)
+    _write_github_actions_playwright_python(suite, output, report, overwrite)
+
+    return report
+
+
+def _write_playwright_requirements(
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write requirements.txt for Playwright."""
+    req = output / "requirements.txt"
+    if not req.exists() or overwrite:
+        req.write_text("""playwright>=1.40
+pytest>=8.0
+pytest-playwright>=0.4
+allure-pytest>=2.16
+allure-playwright>=0.1
+""", encoding="utf-8")
+        report["files_created"].append(str(req))
+
+
+def _write_playwright_conftest(
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write conftest.py for Playwright."""
+    tests_dir = output / "tests"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+
+    conftest = tests_dir / "conftest.py"
+    if not conftest.exists() or overwrite:
+        conftest.write_text(_PLAYWRIGHT_PYTHON_CONFTEST, encoding="utf-8")
+        report["files_created"].append(str(conftest))
+
+
+def _write_playwright_tests(
+    suite: TestSuite,
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write Playwright test files."""
+    tests_dir = output / "tests"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+
+    for module in suite.modules:
+        file_name = f"{_to_snake_case(module.name)}.py"
+        if not file_name.startswith("test_"):
+            file_name = f"test_{file_name}"
+        file_path = tests_dir / file_name
+
+        if file_path.exists() and not overwrite:
+            report["files_skipped"].append(str(file_path))
+            continue
+
+        content = _generate_playwright_python_test_file(module)
+        file_path.write_text(content, encoding="utf-8")
+        report["files_created"].append(str(file_path))
+
+
+def _generate_playwright_python_test_file(module: TestModule) -> str:
+    """Generate Playwright Python test file."""
+    tests = []
+    for test in module.tests:
+        test_code = _generate_playwright_python_test_func(test)
+        tests.append(test_code)
+
+    tests_str = "\n\n\n".join(tests)
+
+    markers = []
+    if module.allure.epic:
+        markers.append(f'    allure.epic("{_escape_python(module.allure.epic)}"),')
+    if module.allure.feature:
+        markers.append(f'    allure.feature("{_escape_python(module.allure.feature)}"),')
+
+    markers_str = "\n".join(markers)
+    pytestmark = f"""pytestmark = [
+{markers_str}
+]
+
+""" if markers else ""
+
+    return f"""import allure
+import pytest
+from playwright.sync_api import Page, expect
+
+{pytestmark}
+{tests_str}
+"""
+
+
+def _generate_playwright_python_test_func(test: TestCase) -> str:
+    """Generate Playwright Python test function."""
+    func_name = test.name if test.name.startswith("test_") else f"test_{_to_snake_case(test.name)}"
+
+    decorators = []
+    if test.allure.story:
+        decorators.append(f'@allure.story("{_escape_python(test.allure.story)}")')
+    if test.allure.title:
+        decorators.append(f'@allure.title("{_escape_python(test.allure.title)}")')
+    if test.skip_reason:
+        decorators.append(f'@pytest.mark.skip(reason="{_escape_python(test.skip_reason)}")')
+
+    decorators_str = "\n".join(decorators) + "\n" if decorators else ""
+
+    steps_code = []
+    for step in test.steps:
+        step_code = _generate_playwright_python_step(step)
+        steps_code.append(step_code)
+
+    body = "\n".join(steps_code) if steps_code else "    pass  # TODO: implement UI test"
+
+    return f"""{decorators_str}def {func_name}(page: Page):
+{body}"""
+
+
+def _generate_playwright_python_step(step: Any) -> str:
+    """Generate Playwright Python step."""
+    step_name = _escape_python(step.name)
+
+    actions = []
+    for assertion in step.assertions:
+        action = _generate_playwright_python_assertion(assertion)
+        if action:
+            actions.append(f"        {action}")
+
+    if actions:
+        actions_str = "\n".join(actions)
+        return f'''    with allure.step("{step_name}"):
+{actions_str}'''
+    else:
+        hint = step.code_hint or '# expect(page.locator("selector")).to_be_visible()'
+        return f'''    with allure.step("{step_name}"):
+        {hint}'''
+
+
+def _generate_playwright_python_assertion(assertion: Any) -> str:
+    """Generate Playwright Python assertion."""
+    actual = assertion.actual
+    expected = assertion.expected
+
+    mapping = {
+        AssertionType.EQUALS: f'expect(page.locator("{actual}")).to_have_text({expected})',
+        AssertionType.TRUE: f'expect(page.locator("{actual}")).to_be_visible()',
+        AssertionType.FALSE: f'expect(page.locator("{actual}")).not_to_be_visible()',
+        AssertionType.CONTAINS: f'expect(page.locator("{actual}")).to_contain_text({expected})',
+        AssertionType.NOT_NONE: f'expect(page.locator("{actual}")).to_be_attached()',
+    }
+
+    return mapping.get(assertion.type, f"# UI: {assertion.type.value}")
+
+
+def _write_github_actions_playwright_python(
+    suite: TestSuite,
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write GitHub Actions for Playwright Python."""
+    workflows_dir = output / ".github" / "workflows"
+    workflows_dir.mkdir(parents=True, exist_ok=True)
+
+    workflow = workflows_dir / "test.yml"
+    if not workflow.exists() or overwrite:
+        workflow.write_text(_PLAYWRIGHT_PYTHON_GITHUB_WORKFLOW, encoding="utf-8")
+        report["files_created"].append(str(workflow))
+
+
+def _generate_typescript_playwright_full(
+    suite: TestSuite,
+    config: dict[str, Any],
+    output: Path,
+    *,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Generate TypeScript Playwright project with full setup."""
+    report: dict[str, Any] = {
+        "target": "typescript-playwright",
+        "files_created": [],
+        "files_skipped": [],
+        "warnings": [],
+    }
+
+    _write_playwright_ts_package_json(suite, output, report, overwrite)
+    _write_playwright_ts_config(output, report, overwrite)
+    _write_playwright_ts_tests(suite, output, report, overwrite)
+    _write_github_actions_playwright_ts(suite, output, report, overwrite)
+
+    return report
+
+
+def _write_playwright_ts_package_json(
+    suite: TestSuite,
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write package.json for Playwright TS."""
+    pkg = output / "package.json"
+    if not pkg.exists() or overwrite:
+        name = _to_npm_name(suite.name)
+        pkg.write_text(_PLAYWRIGHT_TS_PACKAGE_JSON.format(name=name), encoding="utf-8")
+        report["files_created"].append(str(pkg))
+
+
+def _write_playwright_ts_config(
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write playwright.config.ts."""
+    config = output / "playwright.config.ts"
+    if not config.exists() or overwrite:
+        config.write_text(_PLAYWRIGHT_TS_CONFIG, encoding="utf-8")
+        report["files_created"].append(str(config))
+
+
+def _write_playwright_ts_tests(
+    suite: TestSuite,
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write Playwright TS test files."""
+    tests_dir = output / "tests"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+
+    for module in suite.modules:
+        file_name = f"{_to_snake_case(module.name)}.spec.ts"
+        file_path = tests_dir / file_name
+
+        if file_path.exists() and not overwrite:
+            report["files_skipped"].append(str(file_path))
+            continue
+
+        content = _generate_playwright_ts_test_file(module)
+        file_path.write_text(content, encoding="utf-8")
+        report["files_created"].append(str(file_path))
+
+
+def _generate_playwright_ts_test_file(module: TestModule) -> str:
+    """Generate Playwright TypeScript test file."""
+    describe_name = _escape_ts(module.allure.feature or module.name)
+
+    tests = []
+    for test in module.tests:
+        test_code = _generate_playwright_ts_test(test)
+        tests.append(test_code)
+
+    tests_str = "\n\n".join(tests)
+
+    return f"""import {{ test, expect }} from '@playwright/test';
+import * as allure from 'allure-js-commons';
+
+test.describe('{describe_name}', () => {{
+{tests_str}
+}});
+"""
+
+
+def _generate_playwright_ts_test(test: TestCase) -> str:
+    """Generate Playwright TS test."""
+    test_name = _escape_ts(test.allure.title or test.name)
+
+    steps = []
+    for step in test.steps:
+        step_code = _generate_playwright_ts_step(step)
+        steps.append(step_code)
+
+    body = "\n".join(steps) if steps else "    // TODO: implement UI test"
+
+    skip = ".skip" if test.skip_reason else ""
+
+    return f"""  test{skip}('{test_name}', async ({{ page }}) => {{
+{body}
+  }});"""
+
+
+def _generate_playwright_ts_step(step: Any) -> str:
+    """Generate Playwright TS step."""
+    step_name = _escape_ts(step.name)
+
+    actions = []
+    for assertion in step.assertions:
+        action = _generate_playwright_ts_assertion(assertion)
+        if action:
+            actions.append(f"      {action}")
+
+    if actions:
+        actions_str = "\n".join(actions)
+        return f"""    await test.step('{step_name}', async () => {{
+{actions_str}
+    }});"""
+    else:
+        hint = step.code_hint or '// await expect(page.locator("selector")).toBeVisible();'
+        return f"""    await test.step('{step_name}', async () => {{
+      {hint}
+    }});"""
+
+
+def _generate_playwright_ts_assertion(assertion: Any) -> str:
+    """Generate Playwright TS assertion."""
+    actual = assertion.actual
+    expected = assertion.expected
+
+    mapping = {
+        AssertionType.EQUALS: f"await expect(page.locator('{actual}')).toHaveText({expected});",
+        AssertionType.TRUE: f"await expect(page.locator('{actual}')).toBeVisible();",
+        AssertionType.FALSE: f"await expect(page.locator('{actual}')).not.toBeVisible();",
+        AssertionType.CONTAINS: f"await expect(page.locator('{actual}')).toContainText({expected});",
+        AssertionType.NOT_NONE: f"await expect(page.locator('{actual}')).toBeAttached();",
+    }
+
+    return mapping.get(assertion.type, f"// UI: {assertion.type.value}")
+
+
+def _write_github_actions_playwright_ts(
+    suite: TestSuite,
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write GitHub Actions for Playwright TS."""
+    workflows_dir = output / ".github" / "workflows"
+    workflows_dir.mkdir(parents=True, exist_ok=True)
+
+    workflow = workflows_dir / "test.yml"
+    if not workflow.exists() or overwrite:
+        workflow.write_text(_PLAYWRIGHT_TS_GITHUB_WORKFLOW, encoding="utf-8")
+        report["files_created"].append(str(workflow))
+
+
+def _generate_javascript_cypress(
+    suite: TestSuite,
+    config: dict[str, Any],
+    output: Path,
+    *,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Generate JavaScript Cypress project."""
+    report: dict[str, Any] = {
+        "target": "javascript-cypress",
+        "files_created": [],
+        "files_skipped": [],
+        "warnings": [],
+    }
+
+    _write_cypress_package_json(suite, output, report, overwrite)
+    _write_cypress_config(output, report, overwrite)
+    _write_cypress_tests(suite, output, report, overwrite)
+    _write_github_actions_cypress(suite, output, report, overwrite)
+
+    return report
+
+
+def _write_cypress_package_json(
+    suite: TestSuite,
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write package.json for Cypress."""
+    pkg = output / "package.json"
+    if not pkg.exists() or overwrite:
+        name = _to_npm_name(suite.name)
+        pkg.write_text(_CYPRESS_PACKAGE_JSON.format(name=name), encoding="utf-8")
+        report["files_created"].append(str(pkg))
+
+
+def _write_cypress_config(
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write cypress.config.js."""
+    config = output / "cypress.config.js"
+    if not config.exists() or overwrite:
+        config.write_text(_CYPRESS_CONFIG, encoding="utf-8")
+        report["files_created"].append(str(config))
+
+
+def _write_cypress_tests(
+    suite: TestSuite,
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write Cypress test files."""
+    tests_dir = output / "cypress" / "e2e"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+
+    for module in suite.modules:
+        file_name = f"{_to_snake_case(module.name)}.cy.js"
+        file_path = tests_dir / file_name
+
+        if file_path.exists() and not overwrite:
+            report["files_skipped"].append(str(file_path))
+            continue
+
+        content = _generate_cypress_test_file(module)
+        file_path.write_text(content, encoding="utf-8")
+        report["files_created"].append(str(file_path))
+
+
+def _generate_cypress_test_file(module: TestModule) -> str:
+    """Generate Cypress test file."""
+    describe_name = _escape_ts(module.allure.feature or module.name)
+
+    tests = []
+    for test in module.tests:
+        test_code = _generate_cypress_test(test)
+        tests.append(test_code)
+
+    tests_str = "\n\n".join(tests)
+
+    return f"""describe('{describe_name}', () => {{
+{tests_str}
+}});
+"""
+
+
+def _generate_cypress_test(test: TestCase) -> str:
+    """Generate Cypress test."""
+    test_name = _escape_ts(test.allure.title or test.name)
+
+    steps = []
+    for step in test.steps:
+        for assertion in step.assertions:
+            action = _generate_cypress_assertion(assertion)
+            if action:
+                steps.append(f"    {action}")
+
+    body = "\n".join(steps) if steps else "    // TODO: implement UI test"
+
+    skip = ".skip" if test.skip_reason else ""
+
+    return f"""  it{skip}('{test_name}', () => {{
+{body}
+  }});"""
+
+
+def _generate_cypress_assertion(assertion: Any) -> str:
+    """Generate Cypress assertion."""
+    actual = assertion.actual
+    expected = assertion.expected
+
+    mapping = {
+        AssertionType.EQUALS: f"cy.get('{actual}').should('have.text', {expected});",
+        AssertionType.TRUE: f"cy.get('{actual}').should('be.visible');",
+        AssertionType.FALSE: f"cy.get('{actual}').should('not.be.visible');",
+        AssertionType.CONTAINS: f"cy.get('{actual}').should('contain', {expected});",
+        AssertionType.NOT_NONE: f"cy.get('{actual}').should('exist');",
+    }
+
+    return mapping.get(assertion.type, f"// UI: {assertion.type.value}")
+
+
+def _write_github_actions_cypress(
+    suite: TestSuite,
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write GitHub Actions for Cypress."""
+    workflows_dir = output / ".github" / "workflows"
+    workflows_dir.mkdir(parents=True, exist_ok=True)
+
+    workflow = workflows_dir / "test.yml"
+    if not workflow.exists() or overwrite:
+        workflow.write_text(_CYPRESS_GITHUB_WORKFLOW, encoding="utf-8")
+        report["files_created"].append(str(workflow))
+
+
+def _escape_python(s: str) -> str:
+    """Escape for Python."""
+    return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+# ===================== UI FRAMEWORK TEMPLATES =====================
+
+
+_SELENIDE_BUILD_GRADLE = """plugins {{
+    id 'java'
+    id 'io.qameta.allure' version '2.11.2'
+}}
+
+group = 'tests'
+version = '1.0.0'
+
+repositories {{
+    mavenCentral()
+}}
+
+def selenideVersion = '7.2.0'
+def allureVersion = '2.25.0'
+def junitVersion = '5.10.1'
+
+dependencies {{
+    testImplementation "com.codeborne:selenide:$selenideVersion"
+    testImplementation "com.codeborne:selenide-allure:$selenideVersion"
+    testImplementation "org.junit.jupiter:junit-jupiter:$junitVersion"
+    testImplementation "io.qameta.allure:allure-junit5:$allureVersion"
+    testImplementation "io.qameta.allure:allure-selenide:$allureVersion"
+}}
+
+allure {{
+    version = allureVersion
+    autoconfigure = true
+    aspectjweaver = true
+}}
+
+test {{
+    useJUnitPlatform()
+    systemProperty 'selenide.headless', 'true'
+    testLogging {{
+        events 'passed', 'skipped', 'failed'
+    }}
+}}
+"""
+
+
+_SELENIDE_TEST_BASE = """package tests;
+
+import com.codeborne.selenide.Configuration;
+import com.codeborne.selenide.logevents.SelenideLogger;
+import io.qameta.allure.selenide.AllureSelenide;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.AfterEach;
+
+import static com.codeborne.selenide.Selenide.closeWebDriver;
+
+public class TestBase {
+    @BeforeAll
+    static void setUp() {
+        SelenideLogger.addListener("AllureSelenide", new AllureSelenide()
+            .screenshots(true)
+            .savePageSource(true));
+        Configuration.browser = "chrome";
+        Configuration.headless = true;
+        Configuration.timeout = 10000;
+    }
+
+    @AfterEach
+    void tearDown() {
+        closeWebDriver();
+    }
+}
+"""
+
+
+_SELENIDE_GITHUB_WORKFLOW = """name: UI Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Run tests
+        run: ./gradlew test
+
+      - name: Generate Allure Report
+        if: always()
+        run: ./gradlew allureReport
+
+      - name: Upload Allure Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results
+          path: build/allure-results
+
+      - name: Upload Screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: build/reports/tests/
+"""
+
+
+_SELENE_CONFTEST = """import pytest
+from selene import browser
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+
+
+@pytest.fixture(scope='function', autouse=True)
+def setup_browser():
+    options = Options()
+    options.add_argument('--headless')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    
+    browser.config.driver = webdriver.Chrome(options=options)
+    browser.config.timeout = 10
+    browser.config.window_width = 1920
+    browser.config.window_height = 1080
+    
+    yield
+    
+    browser.quit()
+"""
+
+
+_SELENE_GITHUB_WORKFLOW = """name: UI Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Chrome
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+
+      - name: Run tests
+        run: pytest --alluredir=allure-results
+
+      - name: Upload Allure Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results
+          path: allure-results
+"""
+
+
+_PLAYWRIGHT_PYTHON_CONFTEST = """import pytest
+from playwright.sync_api import Page
+
+
+@pytest.fixture(scope='function')
+def page(page: Page) -> Page:
+    page.set_viewport_size({'width': 1920, 'height': 1080})
+    yield page
+"""
+
+
+_PLAYWRIGHT_PYTHON_GITHUB_WORKFLOW = """name: UI Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: playwright install --with-deps
+
+      - name: Run tests
+        run: pytest --alluredir=allure-results
+
+      - name: Upload Allure Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results
+          path: allure-results
+
+      - name: Upload traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
+"""
+
+
+_PLAYWRIGHT_TS_PACKAGE_JSON = """{{
+  "name": "{name}",
+  "version": "1.0.0",
+  "scripts": {{
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "allure:generate": "allure generate ./allure-results -o ./allure-report --clean",
+    "allure:serve": "allure serve ./allure-results"
+  }},
+  "devDependencies": {{
+    "@playwright/test": "^1.42.0",
+    "allure-playwright": "^3.0.0"
+  }}
+}}
+"""
+
+
+_PLAYWRIGHT_TS_CONFIG = """import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './tests',
+  fullyParallel: true,
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 2 : 0,
+  workers: process.env.CI ? 1 : undefined,
+  reporter: [
+    ['html'],
+    ['allure-playwright', { resultsDir: 'allure-results' }]
+  ],
+  use: {
+    trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
+  },
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+  ],
+});
+"""
+
+
+_PLAYWRIGHT_TS_GITHUB_WORKFLOW = """name: UI Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps
+
+      - name: Run tests
+        run: npx playwright test
+
+      - name: Upload Allure Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results
+          path: allure-results
+
+      - name: Upload Playwright Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+"""
+
+
+_CYPRESS_PACKAGE_JSON = """{{
+  "name": "{name}",
+  "version": "1.0.0",
+  "scripts": {{
+    "test": "cypress run",
+    "test:open": "cypress open",
+    "allure:generate": "allure generate ./allure-results -o ./allure-report --clean",
+    "allure:serve": "allure serve ./allure-results"
+  }},
+  "devDependencies": {{
+    "cypress": "^13.6.0",
+    "@shelex/cypress-allure-plugin": "^2.40.0"
+  }}
+}}
+"""
+
+
+_CYPRESS_CONFIG = """const { defineConfig } = require('cypress');
+const allureWriter = require('@shelex/cypress-allure-plugin/writer');
+
+module.exports = defineConfig({
+  e2e: {
+    setupNodeEvents(on, config) {
+      allureWriter(on, config);
+      return config;
+    },
+    env: {
+      allure: true,
+      allureResultsPath: 'allure-results',
+    },
+  },
+});
+"""
+
+
+_CYPRESS_GITHUB_WORKFLOW = """name: UI Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cypress run
+        uses: cypress-io/github-action@v6
+        with:
+          browser: chrome
+          headless: true
+
+      - name: Upload Allure Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results
+          path: allure-results
+
+      - name: Upload Cypress Screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-screenshots
+          path: cypress/screenshots
+"""
+
+
 _GENERATORS = {
     # Java ecosystem
     "java-junit5-gradle": _generate_java_junit5_gradle,
@@ -1949,7 +3248,7 @@ _GENERATORS = {
     "kotlin-kotest-gradle": _generate_java_junit5_gradle,
     # TypeScript/JavaScript
     "typescript-vitest": _generate_typescript_vitest,
-    "typescript-playwright": _generate_typescript_vitest,
+    "typescript-playwright": _generate_typescript_playwright_full,
     "typescript-jest": _generate_typescript_vitest,
     "javascript-mocha": _generate_typescript_vitest,
     # C# / .NET
@@ -1967,8 +3266,26 @@ _GENERATORS = {
     # PHP
     "php-phpunit": _generate_php_phpunit,
     "php-codeception": _generate_php_phpunit,
-    # Python (roundtrip)
-    "python-pytest": _generate_typescript_vitest,  # TODO: proper Python generator
+    # Python
+    "python-pytest": _generate_python_playwright,  # Basic pytest
     # Scala
     "scala-scalatest": _generate_java_junit5_gradle,
+    # ========== UI Testing ==========
+    # Selenium
+    "java-selenium-junit5": _generate_java_selenide,  # Uses same base
+    "python-selenium-pytest": _generate_python_selene,
+    "csharp-selenium-nunit": _generate_csharp_nunit,
+    # Selenide
+    "java-selenide-junit5": _generate_java_selenide,
+    "java-selenide-testng": _generate_java_selenide,
+    # Selene
+    "python-selene-pytest": _generate_python_selene,
+    # Playwright (multi-language)
+    "python-playwright-pytest": _generate_python_playwright,
+    "java-playwright-junit5": _generate_java_selenide,  # Similar structure
+    "csharp-playwright-nunit": _generate_csharp_nunit,
+    # Cypress
+    "javascript-cypress": _generate_javascript_cypress,
+    # WebdriverIO
+    "typescript-webdriverio": _generate_typescript_vitest,
 }
