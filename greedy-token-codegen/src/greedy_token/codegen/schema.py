@@ -267,6 +267,7 @@ class TestSuite:
 
 # Target framework configurations
 TARGETS = {
+    # Java ecosystem
     "java-junit5-gradle": {
         "language": "java",
         "test_framework": "junit5",
@@ -281,6 +282,14 @@ TARGETS = {
         "allure_version": "2.25.0",
         "extensions": [".java"],
     },
+    "java-testng-gradle": {
+        "language": "java",
+        "test_framework": "testng",
+        "build_tool": "gradle",
+        "allure_version": "2.25.0",
+        "extensions": [".java"],
+    },
+    # Kotlin
     "kotlin-junit5-gradle": {
         "language": "kotlin",
         "test_framework": "junit5",
@@ -288,6 +297,14 @@ TARGETS = {
         "allure_version": "2.25.0",
         "extensions": [".kt"],
     },
+    "kotlin-kotest-gradle": {
+        "language": "kotlin",
+        "test_framework": "kotest",
+        "build_tool": "gradle",
+        "allure_version": "2.25.0",
+        "extensions": [".kt"],
+    },
+    # TypeScript/JavaScript
     "typescript-vitest": {
         "language": "typescript",
         "test_framework": "vitest",
@@ -302,6 +319,21 @@ TARGETS = {
         "allure_version": "3.0.0",
         "extensions": [".ts", ".spec.ts"],
     },
+    "typescript-jest": {
+        "language": "typescript",
+        "test_framework": "jest",
+        "build_tool": "npm",
+        "allure_version": "3.0.0",
+        "extensions": [".ts", ".test.ts"],
+    },
+    "javascript-mocha": {
+        "language": "javascript",
+        "test_framework": "mocha",
+        "build_tool": "npm",
+        "allure_version": "3.0.0",
+        "extensions": [".js", ".spec.js"],
+    },
+    # C# / .NET
     "csharp-nunit": {
         "language": "csharp",
         "test_framework": "nunit",
@@ -316,11 +348,88 @@ TARGETS = {
         "allure_version": "2.25.0",
         "extensions": [".cs"],
     },
+    "csharp-mstest": {
+        "language": "csharp",
+        "test_framework": "mstest",
+        "build_tool": "dotnet",
+        "allure_version": "2.25.0",
+        "extensions": [".cs"],
+    },
+    # Go
     "go-testing": {
         "language": "go",
         "test_framework": "testing",
         "build_tool": "go",
         "allure_version": "2.25.0",
         "extensions": ["_test.go"],
+    },
+    "go-testify": {
+        "language": "go",
+        "test_framework": "testify",
+        "build_tool": "go",
+        "allure_version": "2.25.0",
+        "extensions": ["_test.go"],
+    },
+    # Rust
+    "rust-cargo": {
+        "language": "rust",
+        "test_framework": "cargo",
+        "build_tool": "cargo",
+        "allure_version": "2.25.0",
+        "extensions": [".rs"],
+    },
+    # Ruby
+    "ruby-rspec": {
+        "language": "ruby",
+        "test_framework": "rspec",
+        "build_tool": "bundler",
+        "allure_version": "2.25.0",
+        "extensions": ["_spec.rb"],
+    },
+    "ruby-minitest": {
+        "language": "ruby",
+        "test_framework": "minitest",
+        "build_tool": "bundler",
+        "allure_version": "2.25.0",
+        "extensions": ["_test.rb"],
+    },
+    # PHP
+    "php-phpunit": {
+        "language": "php",
+        "test_framework": "phpunit",
+        "build_tool": "composer",
+        "allure_version": "2.25.0",
+        "extensions": ["Test.php"],
+    },
+    "php-codeception": {
+        "language": "php",
+        "test_framework": "codeception",
+        "build_tool": "composer",
+        "allure_version": "2.25.0",
+        "extensions": ["Cest.php"],
+    },
+    # Swift
+    "swift-xctest": {
+        "language": "swift",
+        "test_framework": "xctest",
+        "build_tool": "swift",
+        "allure_version": "2.25.0",
+        "extensions": [".swift"],
+    },
+    # Python (for migration/consistency)
+    "python-pytest": {
+        "language": "python",
+        "test_framework": "pytest",
+        "build_tool": "pip",
+        "allure_version": "2.25.0",
+        "extensions": ["test_*.py"],
+    },
+    # Scala
+    "scala-scalatest": {
+        "language": "scala",
+        "test_framework": "scalatest",
+        "build_tool": "sbt",
+        "allure_version": "2.25.0",
+        "extensions": [".scala"],
     },
 }
