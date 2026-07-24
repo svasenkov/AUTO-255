@@ -268,6 +268,20 @@ class TestSuite:
 # Target framework configurations
 TARGETS = {
     # Java ecosystem
+    "java-junit4-gradle": {
+        "language": "java",
+        "test_framework": "junit4",
+        "build_tool": "gradle",
+        "allure_version": "2.25.0",
+        "extensions": [".java"],
+    },
+    "java-junit4-maven": {
+        "language": "java",
+        "test_framework": "junit4",
+        "build_tool": "maven",
+        "allure_version": "2.25.0",
+        "extensions": [".java"],
+    },
     "java-junit5-gradle": {
         "language": "java",
         "test_framework": "junit5",
@@ -286,6 +300,13 @@ TARGETS = {
         "language": "java",
         "test_framework": "testng",
         "build_tool": "gradle",
+        "allure_version": "2.25.0",
+        "extensions": [".java"],
+    },
+    "java-testng-maven": {
+        "language": "java",
+        "test_framework": "testng",
+        "build_tool": "maven",
         "allure_version": "2.25.0",
         "extensions": [".java"],
     },

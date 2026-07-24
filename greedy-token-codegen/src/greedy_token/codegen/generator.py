@@ -81,6 +81,190 @@ def _generate_java_junit5_gradle(
     return report
 
 
+def _generate_java_junit4_gradle(
+    suite: TestSuite,
+    config: dict[str, Any],
+    output: Path,
+    *,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Generate Java JUnit4 + Gradle project."""
+    report: dict[str, Any] = {
+        "target": "java-junit4-gradle",
+        "files_created": [],
+        "files_skipped": [],
+        "warnings": [],
+    }
+
+    _write_junit4_gradle_files(suite, output, report, overwrite)
+    _write_junit4_tests(suite, output, report, overwrite)
+    _write_junit4_fixtures(suite, output, report, overwrite)
+    _write_allure_config(output, report, overwrite)
+    _write_github_actions_java(suite, output, report, overwrite)
+
+    return report
+
+
+def _write_junit4_gradle_files(
+    suite: TestSuite,
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write JUnit4 build.gradle and settings.gradle."""
+    build_gradle = output / "build.gradle"
+    if build_gradle.exists() and not overwrite:
+        report["files_skipped"].append(str(build_gradle))
+    else:
+        build_gradle.write_text(_JAVA_JUNIT4_BUILD_GRADLE.format(
+            project_name=_to_java_project_name(suite.name),
+            description=suite.description or f"Generated from {suite.name}",
+        ), encoding="utf-8")
+        report["files_created"].append(str(build_gradle))
+
+    settings_gradle = output / "settings.gradle"
+    if settings_gradle.exists() and not overwrite:
+        report["files_skipped"].append(str(settings_gradle))
+    else:
+        settings_gradle.write_text(
+            f"rootProject.name = '{_to_java_project_name(suite.name)}'\n",
+            encoding="utf-8",
+        )
+        report["files_created"].append(str(settings_gradle))
+
+
+def _write_junit4_tests(
+    suite: TestSuite,
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write JUnit4 test classes."""
+    test_dir = output / "src" / "test" / "java" / "tests"
+    test_dir.mkdir(parents=True, exist_ok=True)
+
+    for module in suite.modules:
+        class_name = _to_java_class_name(module.name)
+        file_path = test_dir / f"{class_name}.java"
+
+        if file_path.exists() and not overwrite:
+            report["files_skipped"].append(str(file_path))
+            continue
+
+        content = _generate_junit4_test_class(module, suite.global_fixtures)
+        file_path.write_text(content, encoding="utf-8")
+        report["files_created"].append(str(file_path))
+
+
+def _generate_junit4_test_class(module: TestModule, global_fixtures: list[Fixture]) -> str:
+    """Generate a JUnit4 test class from a TestModule."""
+    class_name = _to_java_class_name(module.name)
+
+    class_annotations = _generate_java_class_annotations(module.allure)
+
+    methods = []
+    for test in module.tests:
+        method = _generate_junit4_test_method(test)
+        methods.append(method)
+
+    methods_str = "\n\n".join(methods)
+
+    return f"""{_JAVA_JUNIT4_IMPORTS}
+
+@RunWith(AllureJunit4.class)
+{class_annotations}
+public class {class_name} extends TestBase {{
+
+{methods_str}
+}}
+"""
+
+
+def _generate_junit4_test_method(test: TestCase) -> str:
+    """Generate a JUnit4 test method from a TestCase."""
+    method_name = _to_java_method_name(test.name)
+    annotations = _generate_junit4_method_annotations(test)
+
+    steps_code = []
+    for step in test.steps:
+        step_code = _generate_java_step(step)
+        steps_code.append(step_code)
+
+    body = "\n".join(steps_code) if steps_code else "        // TODO: implement test"
+
+    return f"""{annotations}
+    @Test
+    public void {method_name}() {{
+{body}
+    }}"""
+
+
+def _generate_junit4_method_annotations(test: TestCase) -> str:
+    """Generate Allure/JUnit4 annotations for a method."""
+    annotations = []
+
+    if test.allure.story:
+        annotations.append(f'    @Story("{_escape_java(test.allure.story)}")')
+    if test.allure.title:
+        annotations.append(f'    @Description("{_escape_java(test.allure.title)}")')
+    if test.allure.severity:
+        severity = test.allure.severity.upper()
+        annotations.append(f'    @Severity(SeverityLevel.{severity})')
+
+    if test.skip_reason:
+        annotations.append(f'    @Ignore("{_escape_java(test.skip_reason)}")')
+
+    return "\n".join(annotations) if annotations else ""
+
+
+def _write_junit4_fixtures(
+    suite: TestSuite,
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write JUnit4 TestBase class."""
+    test_dir = output / "src" / "test" / "java" / "tests"
+    test_dir.mkdir(parents=True, exist_ok=True)
+
+    base_file = test_dir / "TestBase.java"
+    if base_file.exists() and not overwrite:
+        report["files_skipped"].append(str(base_file))
+    else:
+        content = _generate_junit4_test_base(suite.global_fixtures)
+        base_file.write_text(content, encoding="utf-8")
+        report["files_created"].append(str(base_file))
+
+
+def _generate_junit4_test_base(fixtures: list[Fixture]) -> str:
+    """Generate JUnit4 TestBase class."""
+    return f"""{_JAVA_JUNIT4_IMPORTS}
+
+public class TestBase {{
+
+    @BeforeClass
+    public static void setUpAll() {{
+        // Global setup
+    }}
+
+    @Before
+    public void setUp() {{
+        // Per-test setup
+    }}
+
+    @After
+    public void tearDown() {{
+        // Per-test cleanup
+    }}
+
+    @AfterClass
+    public static void tearDownAll() {{
+        // Global cleanup
+    }}
+}}
+"""
+
+
 def _write_gradle_files(
     suite: TestSuite,
     output: Path,
@@ -610,6 +794,18 @@ import static io.qameta.allure.Allure.step;
 import static org.assertj.core.api.Assertions.*;"""
 
 
+_JAVA_JUNIT4_IMPORTS = """package tests;
+
+import io.qameta.allure.*;
+import org.junit.*;
+import org.junit.runner.RunWith;
+import io.qameta.allure.junit4.AllureJunit4;
+
+import static io.qameta.allure.Allure.step;
+import static org.assertj.core.api.Assertions.*;
+import static org.junit.Assert.*;"""
+
+
 _JAVA_BUILD_GRADLE = """plugins {{
     id 'java'
     id 'io.qameta.allure' version '2.11.2'
@@ -640,6 +836,47 @@ allure {{
 
 test {{
     useJUnitPlatform()
+    testLogging {{
+        events 'passed', 'skipped', 'failed'
+    }}
+}}
+
+tasks.withType(JavaCompile) {{
+    options.encoding = 'UTF-8'
+}}
+"""
+
+
+_JAVA_JUNIT4_BUILD_GRADLE = """plugins {{
+    id 'java'
+    id 'io.qameta.allure' version '2.11.2'
+}}
+
+group = 'tests'
+version = '1.0.0'
+description = '{description}'
+
+repositories {{
+    mavenCentral()
+}}
+
+def allureVersion = '2.25.0'
+def junit4Version = '4.13.2'
+
+dependencies {{
+    testImplementation "junit:junit:$junit4Version"
+    testImplementation "io.qameta.allure:allure-junit4:$allureVersion"
+    testImplementation 'org.assertj:assertj-core:3.24.2'
+    testRuntimeOnly 'org.aspectj:aspectjweaver:1.9.21'
+}}
+
+allure {{
+    version = allureVersion
+    autoconfigure = true
+    aspectjweaver = true
+}}
+
+test {{
     testLogging {{
         events 'passed', 'skipped', 'failed'
     }}
@@ -3240,9 +3477,12 @@ jobs:
 
 _GENERATORS = {
     # Java ecosystem
+    "java-junit4-gradle": _generate_java_junit4_gradle,
+    "java-junit4-maven": _generate_java_junit4_gradle,
     "java-junit5-gradle": _generate_java_junit5_gradle,
     "java-junit5-maven": _generate_java_junit5_gradle,
     "java-testng-gradle": _generate_java_junit5_gradle,
+    "java-testng-maven": _generate_java_junit5_gradle,
     # Kotlin
     "kotlin-junit5-gradle": _generate_java_junit5_gradle,
     "kotlin-kotest-gradle": _generate_java_junit5_gradle,
