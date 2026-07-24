@@ -105,6 +105,78 @@ def _generate_java_junit4_gradle(
     return report
 
 
+def _generate_java_junit6_gradle(
+    suite: TestSuite,
+    config: dict[str, Any],
+    output: Path,
+    *,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Generate Java JUnit6 + Gradle project (Java 17+, unified versioning)."""
+    report: dict[str, Any] = {
+        "target": "java-junit6-gradle",
+        "files_created": [],
+        "files_skipped": [],
+        "warnings": [],
+    }
+
+    _write_junit6_gradle_files(suite, output, report, overwrite)
+    _write_java_tests(suite, output, report, overwrite)  # Same test structure as JUnit 5
+    _write_java_fixtures(suite, output, report, overwrite)
+    _write_allure_config(output, report, overwrite)
+    _write_github_actions_java17(suite, output, report, overwrite)
+
+    return report
+
+
+def _write_junit6_gradle_files(
+    suite: TestSuite,
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write JUnit6 build.gradle and settings.gradle."""
+    build_gradle = output / "build.gradle"
+    if build_gradle.exists() and not overwrite:
+        report["files_skipped"].append(str(build_gradle))
+    else:
+        build_gradle.write_text(_JAVA_JUNIT6_BUILD_GRADLE.format(
+            project_name=_to_java_project_name(suite.name),
+            description=suite.description or f"Generated from {suite.name}",
+        ), encoding="utf-8")
+        report["files_created"].append(str(build_gradle))
+
+    settings_gradle = output / "settings.gradle"
+    if settings_gradle.exists() and not overwrite:
+        report["files_skipped"].append(str(settings_gradle))
+    else:
+        settings_gradle.write_text(
+            f"rootProject.name = '{_to_java_project_name(suite.name)}'\n",
+            encoding="utf-8",
+        )
+        report["files_created"].append(str(settings_gradle))
+
+
+def _write_github_actions_java17(
+    suite: TestSuite,
+    output: Path,
+    report: dict[str, Any],
+    overwrite: bool,
+) -> None:
+    """Write GitHub Actions workflow for Java 17+ (JUnit 6)."""
+    workflows_dir = output / ".github" / "workflows"
+    workflows_dir.mkdir(parents=True, exist_ok=True)
+
+    workflow_file = workflows_dir / "test.yml"
+    if workflow_file.exists() and not overwrite:
+        report["files_skipped"].append(str(workflow_file))
+    else:
+        workflow_file.write_text(_JAVA_JUNIT6_GITHUB_WORKFLOW.format(
+            project_name=suite.name,
+        ), encoding="utf-8")
+        report["files_created"].append(str(workflow_file))
+
+
 def _write_junit4_gradle_files(
     suite: TestSuite,
     output: Path,
@@ -888,6 +960,54 @@ tasks.withType(JavaCompile) {{
 """
 
 
+_JAVA_JUNIT6_BUILD_GRADLE = """plugins {{
+    id 'java'
+    id 'io.qameta.allure' version '2.11.2'
+}}
+
+group = 'tests'
+version = '1.0.0'
+description = '{description}'
+
+java {{
+    toolchain {{
+        languageVersion = JavaLanguageVersion.of(17)
+    }}
+}}
+
+repositories {{
+    mavenCentral()
+}}
+
+def junit6Version = '6.1.2'
+def allureVersion = '2.25.0'
+
+dependencies {{
+    testImplementation "org.junit.jupiter:junit-jupiter:$junit6Version"
+    testImplementation "org.junit.platform:junit-platform-launcher:$junit6Version"
+    testImplementation "io.qameta.allure:allure-junit5:$allureVersion"
+    testImplementation 'org.assertj:assertj-core:3.26.0'
+}}
+
+allure {{
+    version = allureVersion
+    autoconfigure = true
+    aspectjweaver = true
+}}
+
+test {{
+    useJUnitPlatform()
+    testLogging {{
+        events 'passed', 'skipped', 'failed'
+    }}
+}}
+
+tasks.withType(JavaCompile) {{
+    options.encoding = 'UTF-8'
+}}
+"""
+
+
 _JAVA_GITHUB_WORKFLOW = """name: Tests
 
 on:
@@ -903,6 +1023,45 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Run tests
+        run: ./gradlew test
+
+      - name: Generate Allure Report
+        if: always()
+        run: ./gradlew allureReport
+
+      - name: Upload Allure Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results
+          path: build/allure-results
+"""
+
+
+_JAVA_JUNIT6_GITHUB_WORKFLOW = """name: Tests (JUnit 6)
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (required for JUnit 6)
         uses: actions/setup-java@v4
         with:
           java-version: '17'
@@ -3481,6 +3640,8 @@ _GENERATORS = {
     "java-junit4-maven": _generate_java_junit4_gradle,
     "java-junit5-gradle": _generate_java_junit5_gradle,
     "java-junit5-maven": _generate_java_junit5_gradle,
+    "java-junit6-gradle": _generate_java_junit6_gradle,
+    "java-junit6-maven": _generate_java_junit6_gradle,
     "java-testng-gradle": _generate_java_junit5_gradle,
     "java-testng-maven": _generate_java_junit5_gradle,
     # Kotlin

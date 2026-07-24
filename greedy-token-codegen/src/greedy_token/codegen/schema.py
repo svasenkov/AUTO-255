@@ -296,6 +296,22 @@ TARGETS = {
         "allure_version": "2.25.0",
         "extensions": [".java"],
     },
+    "java-junit6-gradle": {
+        "language": "java",
+        "test_framework": "junit6",
+        "build_tool": "gradle",
+        "allure_version": "2.25.0",
+        "java_version": "17",
+        "extensions": [".java"],
+    },
+    "java-junit6-maven": {
+        "language": "java",
+        "test_framework": "junit6",
+        "build_tool": "maven",
+        "allure_version": "2.25.0",
+        "java_version": "17",
+        "extensions": [".java"],
+    },
     "java-testng-gradle": {
         "language": "java",
         "test_framework": "testng",
